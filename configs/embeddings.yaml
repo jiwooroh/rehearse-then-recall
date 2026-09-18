@@ -1,0 +1,11 @@
+# Embedding configuration for ThreadMemory retrieval (query/passage embeddings
+# over conversation turns). Ported from fit-over-depth/configs/importance_filter.yaml.
+
+model: nvidia/nemotron-3-embed-1b
+truncate: END   # NONE/START/END — how the server handles input over the model's token max
+batch_size: 16
+timeout: 30.0
+max_retries: 2
+dimensions: null
+api_key_env: NVIDIA_NIM_API_KEY
+on_error: pass_through

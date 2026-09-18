@@ -1,0 +1,9 @@
+pyyaml
+requests
+numpy
+pytest
+nltk
+python-dotenv
+ipykernel
+nbconvert
+pandas
