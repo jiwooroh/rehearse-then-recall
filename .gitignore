@@ -9,3 +9,6 @@ data/processed/
 data/sample/*.csv
 results/*.csv
 results/*.json
+
+# API response caches (pipeline/cache.py)
+data/cache/

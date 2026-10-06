@@ -92,9 +92,15 @@ def last_embedding_error() -> Exception | None:
 def embed_with_retry(
     texts: list[str], input_type: str, config: dict, embed_fn, rate_limiter=None,
 ) -> list[list[float]] | None:
-    """Retries embed_fn up to config["max_retries"] times. If retries are
-    exhausted, logs the cause to stderr and returns None. The cause can also
-    be queried via last_embedding_error().
+    """Retries embed_fn up to config["max_retries"] times per batch.
+
+    `texts` is split into chunks of `config["batch_size"]` so one call never
+    exceeds the API's per-request item cap (NIM's hosted embedding endpoint
+    caps batches at 256, and `batch_size` in embeddings.yaml defaults well
+    under that) — a long document easily produces more sentences than that.
+    If any batch's retries are exhausted, logs the cause to stderr and
+    returns None for the whole call. The cause can also be queried via
+    last_embedding_error().
 
     `rate_limiter`, if given, is a `rate_limit.RateLimiter` whose `.acquire()`
     is called before every attempt (including retries) — see that module for
@@ -102,34 +108,39 @@ def embed_with_retry(
     """
     global _last_embedding_error
     api_key = _resolve_api_key(config)
-    last_error: Exception | None = None
-    for attempt in range(config["max_retries"] + 1):
-        if rate_limiter is not None:
-            rate_limiter.acquire()
-        try:
-            result = embed_fn(
-                texts,
-                input_type=input_type,
-                model=config["model"],
-                truncate=config["truncate"],
-                api_key=api_key,
-                timeout=config["timeout"],
-                dimensions=config.get("dimensions"),
-            )
-            _last_embedding_error = None
-            return result
-        except (EmbeddingAPIError, requests.RequestException) as e:
-            last_error = e
-            if attempt == config["max_retries"]:
-                _last_embedding_error = last_error
-                print(
-                    f"[embeddings] Embedding API call failed (retries exhausted: {config['max_retries']}, "
-                    f"{len(texts)} texts, input_type={input_type!r}): "
-                    f"{type(last_error).__name__}: {last_error}",
-                    file=sys.stderr,
+    batch_size = config.get("batch_size") or len(texts)
+
+    all_embeddings: list[list[float]] = []
+    for batch in _batched(texts, batch_size):
+        last_error: Exception | None = None
+        for attempt in range(config["max_retries"] + 1):
+            if rate_limiter is not None:
+                rate_limiter.acquire()
+            try:
+                result = embed_fn(
+                    batch,
+                    input_type=input_type,
+                    model=config["model"],
+                    truncate=config["truncate"],
+                    api_key=api_key,
+                    timeout=config["timeout"],
+                    dimensions=config.get("dimensions"),
                 )
-                return None
-    return None
+                _last_embedding_error = None
+                all_embeddings.extend(result)
+                break
+            except (EmbeddingAPIError, requests.RequestException) as e:
+                last_error = e
+                if attempt == config["max_retries"]:
+                    _last_embedding_error = last_error
+                    print(
+                        f"[embeddings] Embedding API call failed (retries exhausted: {config['max_retries']}, "
+                        f"{len(batch)} texts, input_type={input_type!r}): "
+                        f"{type(last_error).__name__}: {last_error}",
+                        file=sys.stderr,
+                    )
+                    return None
+    return all_embeddings
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
